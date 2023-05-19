@@ -1,3 +1,4 @@
+from flask import Flask, jsonify, request
 import requests
 from geopy.geocoders import Nominatim
 from shapely.geometry import shape, Point
@@ -15,16 +16,20 @@ def get_random_useragent():
 
 def get_city_polygon(city):
   try:
+    print("Getting city polygon...")
     geolocator = Nominatim(user_agent=get_random_useragent())
     location = geolocator.geocode(city)
     if location is not None:
+      print(f"Found location: {location}")
       url = f'https://nominatim.openstreetmap.org/search.php?q={location.address}&polygon_geojson=1&format=jsonv2'
       headers = {'User-Agent': get_random_useragent()}
       response = requests.get(url, headers=headers)
       response_json = response.json()
       if response_json:
+        print(f"Response JSON: {response_json}")
         polygon_geojson = response_json[0]['geojson']
         polygon = shape(polygon_geojson)
+        print(f"Got city polygon: {polygon}")
         return polygon
   except Exception as e:
     print(f"An error occurred while getting the city polygon for {city}: {e}")
@@ -86,35 +91,33 @@ def write_urls_to_file(urls, filename):
     print(f"Successfully wrote {len(urls)} URLs to {filename}.")
   except Exception as e:
     print(f"An error occurred while writing URLs to the file: {e}")
-
   
-if __name__ == "__main__":
-  # declarations
-  city_name = 'Phoenix Arizona'
-  location_of_interest = 'Dentists'
+app = Flask(__name__)
+
+@app.route('/generate', methods=['POST'])
+def generate():
+  try:
+    city_name = request.json.get('city_name')
+    location_of_interest = request.json.get('location_of_interest')
+    
+    if city_name is None or location_of_interest is None:
+      return jsonify({'error': 'Bad request', 'message': 'City name and location of interest are required'}), 400
+    
+    city_polygon = get_city_polygon(city_name)
+
+    if city_polygon is None:
+      return jsonify({'error': 'Could not find city polygon for given city'}), 400
+
+    grid_points = create_grid(city_polygon)
+
+    google_maps_urls = [generate_google_maps_url(city_name, location_of_interest, point) for point in grid_points]
+
+    urls_filename = f"urls_{city_name.replace(' ', '_')}_{location_of_interest.replace(' ', '_')}.txt"
+    write_urls_to_file(google_maps_urls, urls_filename)
   
-  print("Generating the city polygon...")
-  # get city polygon 
-  city_polygon = get_city_polygon(city_name)
+    return jsonify({'message': f"Generated {len(google_maps_urls)} URLs and saved to {urls_filename}."}), 200
+  except Exception as e:
+    return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
 
-  # check if city_polygon is None
-  if city_polygon is None:
-    print(f"Could not find city polygon for {city_name}")
-    exit(1)
-
-  # create grid of points in the city
-  grid_points = create_grid(city_polygon)
-
-  # plot the grid points on a map
-  # plot_grid_points(grid_points, 'grid_points')
-
-  # generate the list of google maps urls
-  print("Generating Google Maps URLs for each grid point...")
-  google_maps_urls = [generate_google_maps_url(city_name, location_of_interest, point) for point in grid_points]
-
-  # write the URLs to a file
-  urls_filename = "urls.txt"
-  write_urls_to_file(google_maps_urls, urls_filename)
-
-  # print the number of URLs that were generated
-  print(f"Generated {len(google_maps_urls)} URLs.")
+if __name__ == '__main__':
+  app.run(host='0.0.0.0')
