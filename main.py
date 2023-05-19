@@ -77,6 +77,16 @@ def generate_google_maps_url(city_name, location_of_interest, point):
   google_maps_url = f'https://www.google.com/maps/search/{location_of_interest}/@{latitude},{longitude},15z'
   
   return google_maps_url
+
+def write_urls_to_file(urls, filename):
+  try:
+    with open(filename, 'w') as f:
+      for url in urls:
+        f.write(f"{url}\n")
+    print(f"Successfully wrote {len(urls)} URLs to {filename}.")
+  except Exception as e:
+    print(f"An error occurred while writing URLs to the file: {e}")
+
   
 if __name__ == "__main__":
   # declarations
@@ -101,6 +111,10 @@ if __name__ == "__main__":
   # generate the list of google maps urls
   print("Generating Google Maps URLs for each grid point...")
   google_maps_urls = [generate_google_maps_url(city_name, location_of_interest, point) for point in grid_points]
+
+  # write the URLs to a file
+  urls_filename = "urls.txt"
+  write_urls_to_file(google_maps_urls, urls_filename)
 
   # print the number of URLs that were generated
   print(f"Generated {len(google_maps_urls)} URLs.")
