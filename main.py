@@ -1,4 +1,5 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_file
+import os
 import requests
 from geopy.geocoders import Nominatim
 from shapely.geometry import shape, Point
@@ -97,25 +98,38 @@ app = Flask(__name__)
 @app.route('/generate', methods=['POST'])
 def generate():
   try:
-    city_name = request.json.get('city_name')
-    location_of_interest = request.json.get('location_of_interest')
-    
-    if city_name is None or location_of_interest is None:
-      return jsonify({'error': 'Bad request', 'message': 'City name and location of interest are required'}), 400
-    
+    data = request.get_json()
+    city_name = data['city_name']
+    location_of_interest = data['location_of_interest']
+    urls_filename = f"urls_{city_name.replace(' ', '_')}_{location_of_interest.replace(' ', '_')}.txt"
+
     city_polygon = get_city_polygon(city_name)
-
-    if city_polygon is None:
-      return jsonify({'error': 'Could not find city polygon for given city'}), 400
-
     grid_points = create_grid(city_polygon)
+    urls = [generate_google_maps_url(city_name, location_of_interest, point) for point in grid_points]
+    write_urls_to_file(urls, urls_filename)
 
-    google_maps_urls = [generate_google_maps_url(city_name, location_of_interest, point) for point in grid_points]
+    return jsonify({'message': 'URLs generated and saved to file successfully'}), 200
+  except Exception as e:
+    return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
+
+@app.route('/generate_urls', methods=['GET'])
+def generate_urls():
+  try:
+    city_name = request.args.get('city_name')
+    location_of_interest = request.args.get('location_of_interest')
 
     urls_filename = f"urls_{city_name.replace(' ', '_')}_{location_of_interest.replace(' ', '_')}.txt"
-    write_urls_to_file(google_maps_urls, urls_filename)
-  
-    return jsonify({'message': f"Generated {len(google_maps_urls)} URLs and saved to {urls_filename}."}), 200
+
+    if not os.path.exists(urls_filename):
+      # response = requests.post('http://localhost:5000/generate', json={'city_name': city_name, 'location_of_interest': location_of_interest})
+      response = requests.post('https://generate-google-maps-urls.holdeeno.repl.co/generate', json={'city_name': city_name, 'location_of_interest': location_of_interest})
+      if response.status_code != 200:
+        return jsonify({'error': 'Could not generate URLs', 'details': response.text}), 500
+
+    with open(urls_filename, 'r') as f:
+      urls = f.readlines()
+    return jsonify(urls), 200
+
   except Exception as e:
     return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
 
