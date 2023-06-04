@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, jsonify, request
 import os
 import requests
 from geopy.geocoders import Nominatim
@@ -7,6 +7,7 @@ from fake_useragent import UserAgent, FakeUserAgentError
 import numpy as np
 import folium
 from folium.plugins import MarkerCluster
+from flask_pymongo import PyMongo
 
 def get_random_useragent():
   try:
@@ -94,6 +95,8 @@ def write_urls_to_file(urls, filename):
     print(f"An error occurred while writing URLs to the file: {e}")
   
 app = Flask(__name__)
+app.config["MONGO_URI"] = "mongodb+srv://holdeeno:Hrhalfor080197@cluster0.aird9eq.mongodb.net/maps_html_data?retryWrites=true&w=majority"
+mongo = PyMongo(app)
 
 @app.route('/generate', methods=['POST'])
 def generate():
@@ -122,21 +125,25 @@ def process_generate(city_name, location_of_interest):
 
 @app.route('/generate_urls', methods=['GET'])
 def generate_urls():
-  try:
-    city_name = request.args.get('city_name')
-    location_of_interest = request.args.get('location_of_interest')
+    try:
+        city_name = request.args.get('city_name')
+        location_of_interest = request.args.get('location_of_interest')
 
-    urls_filename = f"urls_{city_name.replace(' ', '_')}_{location_of_interest.replace(' ', '_')}.txt"
+        urls_filename = f"urls_{city_name.replace(' ', '_')}_{location_of_interest.replace(' ', '_')}.txt"
 
-    if not os.path.exists(urls_filename):
-      process_generate(city_name, location_of_interest)  # call the process_generate function directly
+        if not os.path.exists(urls_filename):
+            process_generate(city_name, location_of_interest)  # call the process_generate function directly
 
-    with open(urls_filename, 'r') as f:
-      urls = f.readlines()
-    return jsonify(urls), 200
+        with open(urls_filename, 'r') as f:
+            urls = f.readlines()
 
-  except Exception as e:
-    return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
-    
+        # Add each URL as a document to the MongoDB collection
+        mongo.db.urls.insert_many([{'url': url.strip()} for url in urls])
+
+        return jsonify(urls), 200
+
+    except Exception as e:
+        return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
+ 
 if __name__ == '__main__':
   app.run(host='0.0.0.0')
