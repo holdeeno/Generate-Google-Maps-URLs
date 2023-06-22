@@ -8,6 +8,7 @@ import numpy as np
 import folium
 from folium.plugins import MarkerCluster
 from flask_pymongo import PyMongo
+from datetime import datetime
 
 def get_random_useragent():
   try:
@@ -58,7 +59,7 @@ def create_grid(city_polygon):
     print(f"An error occurred while creating the grid in the city: {e}")
     return []
 
-def plot_grid_points(grid_points, filename):
+def plot_grid_points(grid_points):  # add ', filename' after 'grid_points' when testing file writing
     if grid_points:
         # Create a folium map centered at the first grid point
         folium_map = folium.Map(location=[grid_points[0][1], grid_points[0][0]], zoom_start=13)
@@ -73,7 +74,8 @@ def plot_grid_points(grid_points, filename):
                 print(f"Plotted {i} points so far.")
 
         # Save the map to an HTML file
-        folium_map.save(filename + '.html')
+        # Uncomment the next line when testing file writing. Make sure to pass 'filename' as an argument to this function.
+        # folium_map.save(filename + '.html')
         print(f"Successfully plotted all {len(grid_points)} points.")
 
 def generate_google_maps_url(city_name, location_of_interest, point):
@@ -87,63 +89,87 @@ def generate_google_maps_url(city_name, location_of_interest, point):
 
 def write_urls_to_file(urls, filename):
   try:
-    with open(filename, 'w') as f:
-      for url in urls:
-        f.write(f"{url}\n")
+    # with open(filename, 'w') as f:
+    #   for url in urls:
+    #     f.write(f"{url}\n")
     print(f"Successfully wrote {len(urls)} URLs to {filename}.")
   except Exception as e:
     print(f"An error occurred while writing URLs to the file: {e}")
   
 app = Flask(__name__)
-app.config["MONGO_URI"] = "mongodb+srv://holdeeno:Hrhalfor080197@cluster0.aird9eq.mongodb.net/maps_html_data?retryWrites=true&w=majority"
+
+mongo_uri = os.environ.get('MONGO_URI')
+if mongo_uri is None:
+    print("Please set the MONGO_URI environment variable.")
+    exit(1)
+
+app.config["MONGO_URI"] = mongo_uri
 mongo = PyMongo(app)
 
-@app.route('/generate', methods=['POST'])
-def generate():
-  try:
-    data = request.get_json()
-    city_name = data['city_name']
-    location_of_interest = data['location_of_interest']
-    return process_generate(city_name, location_of_interest)
-  except Exception as e:
-    return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
-
-def process_generate(city_name, location_of_interest):
-    try:
-        urls_filename = f"urls_{city_name.replace(' ', '_')}_{location_of_interest.replace(' ', '_')}.txt"
-        map_filename = f"map_{city_name.replace(' ', '_')}_{location_of_interest.replace(' ', '_')}"
-
-        city_polygon = get_city_polygon(city_name)
-        grid_points = create_grid(city_polygon)
-        plot_grid_points(grid_points, map_filename)
-        urls = [generate_google_maps_url(city_name, location_of_interest, point) for point in grid_points]
-        write_urls_to_file(urls, urls_filename)
-
-        return jsonify({'message': 'URLs generated and saved to file successfully'}), 200
-    except Exception as e:
-        return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
-
-@app.route('/generate_urls', methods=['GET'])
+@app.route('/generate/urls', methods=['POST'])
 def generate_urls():
     try:
-        city_name = request.args.get('city_name')
-        location_of_interest = request.args.get('location_of_interest')
-
-        urls_filename = f"urls_{city_name.replace(' ', '_')}_{location_of_interest.replace(' ', '_')}.txt"
-
-        if not os.path.exists(urls_filename):
-            process_generate(city_name, location_of_interest)  # call the process_generate function directly
-
-        with open(urls_filename, 'r') as f:
-            urls = f.readlines()
-
-        # Add each URL as a document to the MongoDB collection
-        mongo.db.urls.insert_many([{'url': url.strip()} for url in urls])
-
-        return jsonify(urls), 200
-
+        data = request.get_json()
+        city_name = data['city_name']
+        location_of_interest = data['location_of_interest']
+        return process_generate_urls(city_name, location_of_interest)
     except Exception as e:
         return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
- 
+
+def process_generate_urls(city_name, location_of_interest):
+    try:
+        db = mongo.db  
+        if db is None:
+            raise Exception("Database is not initialized.")
+
+        # Dynamically set the database and collection
+        db_name = f"{location_of_interest}_urls"
+        coll_name = f"{location_of_interest}_{city_name.replace(' ', '_')}_urls"
+        db = mongo.cx[db_name]  
+        urls_collection = db[coll_name]  
+
+        urls_exist = False
+        generation_time = None
+        # Check if collection exists and contains data
+        if urls_collection.count_documents({}) > 0:
+            # Check if any URL document has a "generation_time" field
+            if urls_collection.count_documents({'generation_time': {'$exists': True}}) > 0:
+                print(f"Retrieving existing URLs for {city_name} and {location_of_interest}...")
+                urls_exist = True
+                urls = [doc['url'] for doc in urls_collection.find()]
+                # Retrieve the generation time from one of the URL documents
+                doc = urls_collection.find_one({'generation_time': {'$exists': True}})
+                if doc:
+                    generation_time = doc['generation_time']
+            else:
+                print(f"No existing URLs with 'generation_time' found for {city_name} and {location_of_interest}, generating new ones...")
+        if not urls_exist:
+            # Generate new URLs if they don't exist or don't have a "generation_time"
+            # urls_filename = f"urls_{city_name.replace(' ', '_')}_{location_of_interest.replace(' ', '_')}.txt"
+            # map_filename = f"map_{city_name.replace(' ', '_')}_{location_of_interest.replace(' ', '_')}"
+            city_polygon = get_city_polygon(city_name)
+            grid_points = create_grid(city_polygon)
+            plot_grid_points(grid_points)  # add ', map_filename' after 'grid_points' when testing file writing
+            urls = [generate_google_maps_url(city_name, location_of_interest, point) for point in grid_points]
+            # write_urls_to_file(urls, urls_filename)
+
+            # Save URLs to MongoDB
+            generation_time = datetime.now().isoformat()  # Record the current time as the generation time
+            for url in urls:
+                urls_collection.insert_one({'url': url, 'generation_time': generation_time})
+
+        return jsonify({
+            'message': 'URLs retrieved or generated successfully', 
+            'city': city_name,
+            'location_of_interest': location_of_interest,
+            'number_of_urls': len(urls),
+            'urls_previously_existed': urls_exist,
+            'generation_time': generation_time,
+            'urls': urls
+        }), 200
+    except Exception as e:
+        return jsonify({'error': 'Internal server error', 'message': str(e)}), 500
+
 if __name__ == '__main__':
   app.run(host='0.0.0.0')
+
